@@ -3,8 +3,22 @@
 
 #ifdef ARDUINO_ARCH_ESP32
 
-#include "esp_intr.h"
-#include "soc/dport_reg.h"
+// ESP32-S3 Check for both ESP-IDF and Arduino environments
+#if defined(ESP_PLATFORM) && (__has_include("esp_intr_alloc.h")) 
+    #include "esp_intr_alloc.h"
+    #include "rom/gpio.h"
+    #include "soc/interrupts.h"
+    #include "soc/system_reg.h"
+	#define ARDUINO_ESP32S3
+
+#elif defined(ESP_PLATFORM) && (__has_include("esp_intr.h"))
+    #include "esp_intr.h"
+    #include "soc/dport_reg.h"
+
+#else
+    #error "Unsupported ESP32 variant or missing header files"
+#endif
+
 #include "driver/gpio.h"
 
 #include "ESP32SJA1000.h"
@@ -53,17 +67,27 @@ int ESP32SJA1000Class::begin(long baudRate)
 
   _loopback = false;
 
-  DPORT_CLEAR_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, DPORT_CAN_RST);
-  DPORT_SET_PERI_REG_MASK(DPORT_PERIP_CLK_EN_REG, DPORT_CAN_CLK_EN);
+  #ifdef ARDUINO_ESP32S3
+	  CLEAR_PERI_REG_MASK(SYSTEM_PERIP_RST_EN1_REG, SYSTEM_TWAI_RST);
+	  SET_PERI_REG_MASK(SYSTEM_PERIP_CLK_EN1_REG, SYSTEM_TWAI_CLK_EN);
+  #else
+	  DPORT_CLEAR_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, DPORT_CAN_RST);
+    DPORT_SET_PERI_REG_MASK(DPORT_PERIP_CLK_EN_REG, DPORT_CAN_CLK_EN);
+  #endif
 
-  // RX pin
+  // RX pin and // TX pin
   gpio_set_direction(_rxPin, GPIO_MODE_INPUT);
-  gpio_matrix_in(_rxPin, CAN_RX_IDX, 0);
-  gpio_pad_select_gpio(_rxPin);
-
-  // TX pin
   gpio_set_direction(_txPin, GPIO_MODE_OUTPUT);
-  gpio_matrix_out(_txPin, CAN_TX_IDX, 0, 0);
+  
+  #ifdef ARDUINO_ESP32S3
+	  gpio_matrix_in(_rxPin, TWAI_RX_IDX, 0);
+	  gpio_matrix_out(_txPin, TWAI_TX_IDX, 0, 0);
+  #else
+    gpio_matrix_in(_rxPin, CAN_RX_IDX, 0);
+    gpio_matrix_out(_txPin, CAN_TX_IDX, 0, 0);
+  #endif
+  
+  gpio_pad_select_gpio(_rxPin);
   gpio_pad_select_gpio(_txPin);
 
   modifyRegister(REG_CDR, 0x80, 0x80); // pelican mode
@@ -156,8 +180,13 @@ void ESP32SJA1000Class::end()
     _intrHandle = NULL;
   }
 
-  DPORT_SET_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, DPORT_CAN_RST);
-  DPORT_CLEAR_PERI_REG_MASK(DPORT_PERIP_CLK_EN_REG, DPORT_CAN_CLK_EN);
+  #ifdef ARDUINO_ESP32S3
+	  CLEAR_PERI_REG_MASK(SYSTEM_PERIP_RST_EN1_REG, SYSTEM_TWAI_RST);
+	  SET_PERI_REG_MASK(SYSTEM_PERIP_CLK_EN1_REG, SYSTEM_TWAI_CLK_EN);
+  #else
+	  DPORT_CLEAR_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, DPORT_CAN_RST);
+    DPORT_SET_PERI_REG_MASK(DPORT_PERIP_CLK_EN_REG, DPORT_CAN_CLK_EN);
+  #endif
 
   CANControllerClass::end();
 }
@@ -268,7 +297,11 @@ void ESP32SJA1000Class::onReceive(void(*callback)(int))
   }
 
   if (callback) {
-    esp_intr_alloc(ETS_CAN_INTR_SOURCE, 0, ESP32SJA1000Class::onInterrupt, this, &_intrHandle);
+  #ifdef ARDUINO_ESP32S3
+	  esp_intr_alloc(ETS_TWAI_INTR_SOURCE, 0, ESP32SJA1000Class::onInterrupt, this, &_intrHandle);
+  #else
+	  esp_intr_alloc(ETS_CAN_INTR_SOURCE, 0, ESP32SJA1000Class::onInterrupt, this, &_intrHandle);
+  #endif
   }
 }
 
